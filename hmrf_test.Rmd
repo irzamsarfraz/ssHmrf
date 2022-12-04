@@ -1,0 +1,191 @@
+---
+title: "hmrf"
+date: 2016-08-25
+output: html_document
+---
+
+# read data
+
+```{r}
+library(smfishHmrf)
+library(tidygraph)
+  library(ggraph)
+  library(graphcoloring)
+
+expression_filepath <- "fcortex.expression.txt"
+coordinates_filepath <- "fcortex.coordinates.txt"
+genes_filepath <- "genes"
+
+expr <- readExpression(expression_filepath) # see it t needed, possibly
+#expr <- data.table::transpose(expr)
+coords <- readCoordinates(coordinates_filepath)
+fields <- coords$field
+coords <- coords$coords
+
+genes <- readGenes(genes_filepath)
+```
+
+# need spatial network
+## knn or delaunay 
+
+## lets do all using giotto
+
+```{r}
+k <- 3
+hmrf_seed <- 100
+nstart <- 1000
+factor_step <- 1.05
+tolerance = 1e-5
+
+.libPaths("/projectnb/rd-spat/HOME/isarfraz/R/")
+my_working_dir <- getwd()
+instrs = createGiottoInstructions(save_plot = TRUE, 
+                                  show_plot = FALSE,
+                                  save_dir = my_working_dir)
+
+g <- createGiottoObject(expression = t(expr), 
+                                 spatial_locs = coords,
+                                 instructions = instrs)
+#g <- filterGiotto(g)
+
+# this raw expression is already normalized but cant find genes without running this
+ #g <- normalizeGiotto(g)
+
+spatPlot2D(g)
+
+# network
+g <- Giotto::createSpatialKNNnetwork(g)
+
+# spatial genes - error 
+# spatialgenes <- Giotto::binSpect(g, spatial_network_name = "knn_network")
+###################
+###################
+
+## params needed
+
+y = t(as.matrix(Giotto::get_expression_values(g, output = "matrix"))) # HMRF_init_obj$y
+
+#nei = HMRF_init_obj$nei
+# for nei below
+spatial_network <- Giotto::get_spatialNetwork(g, name = "knn_network", output = "networkDT")
+numcell <- dim(y)[1]
+  m<-dim(y)[2]
+ncol.nei = max(table(c(spatial_network$to,spatial_network$from)))
+nei = matrix(-1,ncol = ncol.nei,nrow = numcell) 
+rownames(nei) = rownames(y)
+for(i in 1:numcell)
+  {
+  nei.i = c(spatial_network$from[spatial_network$to==rownames(nei)[i]],
+              spatial_network$to[spatial_network$from==rownames(nei)[i]])
+    if(length(nei.i)>0)nei[i,1:length(nei.i)] = sort(match(nei.i,rownames(y)))
+  }
+numnei<-as.integer(rowSums(nei!=(-1)))
+# now we have both nei and numnei
+
+
+
+# numnei = HMRF_init_obj$numnei # have it above
+
+# blocks = HMRF_init_obj$blocks
+nn<-nei
+numedge <- 0
+for(i in 1:numcell){
+    numedge<-numedge + length(nn[i,nn[i,]!=-1])
+}
+edgelist <- matrix(0, nrow=numedge, ncol=2)
+edge_ind <- 1
+for(i in 1:numcell){
+  neighbors <- nn[i, nn[i,]!=-1]
+  for(j in 1:length(neighbors)){
+    edgelist[edge_ind,] <- c(i, neighbors[j])
+    edge_ind<-edge_ind+1
+  }
+}
+
+pp<-tidygraph::tbl_graph(edges=as.data.frame(edgelist), directed=F)
+yy<-pp%>%mutate(color=as.factor(color_dsatur()))
+colors<-as.list(yy)$nodes$color
+cl_color <- sort(unique(colors))
+blocks<-lapply(cl_color, function(cl){which(colors==cl)})
+
+
+
+# damp = HMRF_init_obj$damp
+# mu = HMRF_init_obj$mu
+# sigma = HMRF_init_obj$sigma
+# k = HMRF_init_obj$k
+
+  kk = smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
+  mu<-t(kk$centers) #should be dimension (m,k)
+  lclust<-lapply(1:k, function(x) which(kk$cluster == x))
+  damp<-array(0, c(k));
+  sigma<-array(0, c(m,m,k))
+  for(i in 1:k){
+    sigma[, , i] <- cov(as.matrix(y[lclust[[i]], ])) 
+    di<-findDampFactor(sigma[,,i], factor=factor_step, d_cutoff=tolerance, startValue=0.0001)
+    damp[i]<-ifelse(is.null(di), 0, di)
+  }
+  
+  
+  spatial_genes_selected <- genes[20:60] # should run binspect here
+  
+  inputList <- list(y=y, nei=nei, numnei=numnei, blocks=blocks,
+       damp=damp, mu=mu, sigma=sigma, k=k, genes=spatial_genes_selected, edgelist=edgelist)
+  
+```
+
+## dohmrf_v2
+
+```{r}
+
+betas <- c(0,10,5)
+beta_init = betas[1]
+beta_increment = betas[2]
+beta_num_iter = betas[3]
+  
+
+beta_seq = (1:beta_num_iter-1)*beta_increment+beta_init
+  # beta_seq = sequence(beta_num_iter,beta_init,beta_increment)
+  beta_seq = sort(unique(c(0,beta_seq)))
+  res <- c()
+  for(beta_current in beta_seq){
+    print(sprintf("Doing beta=%.3f", beta_current))
+    tc.hmrfem<-smfishHmrf.hmrfem.multi(y=y, neighbors=nei, beta=beta_current, numnei=numnei,
+                                       blocks=blocks, mu=mu, sigma=sigma, verbose=T, err=1e-7, maxit=50, dampFactor=damp)
+    #smfishHmrf.hmrfem.multi.save(name, outdir, beta_current, tc.hmrfem, k)
+    #do_one(name, outdir, k, y, nei, beta_current, numnei, blocks, mu, sigma, damp)
+
+    ### stop the loop if there is a samll maximum probablity (<1/k+0.05v) of any gene
+    if(sum(apply(tc.hmrfem$prob,1,max)<(1/k+0.05))>0)
+    {cat(paste0('\n HMRF is stopping at large beta >= ',beta_current,', numerical error occurs, results of smaller betas were stored\n'));
+      break()}
+
+    t_key <- sprintf("k=%d b=%.2f", k, beta_current)
+    tc.hmrfem$sigma=NULL
+    tc.hmrfem$mu=NULL
+    rownames(tc.hmrfem$prob) = rownames(y)
+    rownames(tc.hmrfem$unnormprob) = rownames(y)
+    names(tc.hmrfem$class) = rownames(y)
+    res[[t_key]] <- tc.hmrfem
+    # beta_current <- beta_current + beta_increment
+  }
+
+  result.hmrf = res
+  HMRFoutput <- result.hmrf
+  
+```
+
+## viewHMRFresults_V2
+
+```{r}
+t_key = sprintf("k=%d b=%.2f", k, beta_seq)
+for(kk in intersect(t_key,names(HMRFoutput)))
+  {
+    dt_kk = HMRFoutput[[kk]]$class
+    spatPlot2D(gobject = g, cell_color = dt_kk, show_plot = T,
+               title = kk)
+  }
+
+```
+
+
