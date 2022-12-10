@@ -1,17 +1,48 @@
 ---
-title: "hmrf"
-date: 2016-08-25
+title: "hmrf r complete code"
+date: 2022-12-10
+author: Irzam Sarfraz
 output: html_document
 ---
 
-# read data
+# Read functions
+```{r}
+readExpression <- function(filePath, header = FALSE){
+  x <- read.table(filePath, header = header, row.names = 1)
+  return(x)
+}
+
+readCoordinates <- function(filePath, header = FALSE){
+  x <- read.table(filePath, header - header, row.names = 1)
+  field <- x[, 1]
+  x <- x[, -1]
+  colnames(x) <- c("X", "Y")
+  return(list(coords = x, field = field))
+}
+
+readGenes <- function(filePath, header = FALSE){
+  x <- read.table(filePath, header = header)
+  x <- as.character(x[[1]])
+  return(x)
+}
+```
+
+# Load libraries
 
 ```{r}
+.libPaths("/projectnb/rd-spat/HOME/isarfraz/R/")
+my_working_dir <- getwd()
+
 library(smfishHmrf)
 library(tidygraph)
-  library(ggraph)
-  library(graphcoloring)
+library(ggraph)
+library(graphcoloring)
+library(dplyr)
+library(Giotto)
+```
 
+# Load data
+```{r}
 expression_filepath <- "fcortex.expression.txt"
 coordinates_filepath <- "fcortex.coordinates.txt"
 genes_filepath <- "genes"
@@ -21,24 +52,13 @@ expr <- readExpression(expression_filepath) # see it t needed, possibly
 coords <- readCoordinates(coordinates_filepath)
 fields <- coords$field
 coords <- coords$coords
-
 genes <- readGenes(genes_filepath)
 ```
 
-# need spatial network
-## knn or delaunay 
-
-## lets do all using giotto
+# Build network using giotto
 
 ```{r}
-k <- 3
-hmrf_seed <- 100
-nstart <- 1000
-factor_step <- 1.05
-tolerance = 1e-5
 
-.libPaths("/projectnb/rd-spat/HOME/isarfraz/R/")
-my_working_dir <- getwd()
 instrs = createGiottoInstructions(save_plot = TRUE, 
                                   show_plot = FALSE,
                                   save_dir = my_working_dir)
@@ -46,30 +66,32 @@ instrs = createGiottoInstructions(save_plot = TRUE,
 g <- createGiottoObject(expression = t(expr), 
                                  spatial_locs = coords,
                                  instructions = instrs)
-#g <- filterGiotto(g)
 
-# this raw expression is already normalized but cant find genes without running this
- #g <- normalizeGiotto(g)
+
+# this raw expression is already normalized but if needed use code below
+# g <- normalizeGiotto(g)
 
 spatPlot2D(g)
 
 # network
 g <- Giotto::createSpatialKNNnetwork(g)
+```
 
-# spatial genes - error 
-# spatialgenes <- Giotto::binSpect(g, spatial_network_name = "knn_network")
-###################
-###################
 
-## params needed
-
+## Compute and set params
+```{r}
+k <- 3
+hmrf_seed <- 100
+nstart <- 1000
+factor_step <- 1.05
+tolerance = 1e-5
 y = t(as.matrix(Giotto::get_expression_values(g, output = "matrix"))) # HMRF_init_obj$y
 
 #nei = HMRF_init_obj$nei
 # for nei below
 spatial_network <- Giotto::get_spatialNetwork(g, name = "knn_network", output = "networkDT")
 numcell <- dim(y)[1]
-  m<-dim(y)[2]
+m<-dim(y)[2]
 ncol.nei = max(table(c(spatial_network$to,spatial_network$from)))
 nei = matrix(-1,ncol = ncol.nei,nrow = numcell) 
 rownames(nei) = rownames(y)
@@ -81,11 +103,7 @@ for(i in 1:numcell)
   }
 numnei<-as.integer(rowSums(nei!=(-1)))
 # now we have both nei and numnei
-
-
-
 # numnei = HMRF_init_obj$numnei # have it above
-
 # blocks = HMRF_init_obj$blocks
 nn<-nei
 numedge <- 0
@@ -108,28 +126,28 @@ colors<-as.list(yy)$nodes$color
 cl_color <- sort(unique(colors))
 blocks<-lapply(cl_color, function(cl){which(colors==cl)})
 
-
-
 # damp = HMRF_init_obj$damp
 # mu = HMRF_init_obj$mu
 # sigma = HMRF_init_obj$sigma
 # k = HMRF_init_obj$k
 
-  kk = smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
-  mu<-t(kk$centers) #should be dimension (m,k)
-  lclust<-lapply(1:k, function(x) which(kk$cluster == x))
-  damp<-array(0, c(k));
-  sigma<-array(0, c(m,m,k))
-  for(i in 1:k){
-    sigma[, , i] <- cov(as.matrix(y[lclust[[i]], ])) 
-    di<-findDampFactor(sigma[,,i], factor=factor_step, d_cutoff=tolerance, startValue=0.0001)
-    damp[i]<-ifelse(is.null(di), 0, di)
-  }
-  
-  
-  spatial_genes_selected <- genes[20:60] # should run binspect here
-  
-  inputList <- list(y=y, nei=nei, numnei=numnei, blocks=blocks,
+kk = smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
+mu<-t(kk$centers) #should be dimension (m,k)
+lclust<-lapply(1:k, function(x) which(kk$cluster == x))
+damp<-array(0, c(k));
+sigma<-array(0, c(m,m,k))
+for(i in 1:k){
+  sigma[, , i] <- cov(as.matrix(y[lclust[[i]], ])) 
+  di<-findDampFactor(sigma[,,i], factor=factor_step, d_cutoff=tolerance, startValue=0.0001)
+  damp[i]<-ifelse(is.null(di), 0, di)
+}
+
+# spatial_genes_selected <- genes[20:60] # should run binspect here
+```
+
+# Save params for input to hmrf
+```{r}
+inputList <- list(y=y, nei=nei, numnei=numnei, blocks=blocks,
        damp=damp, mu=mu, sigma=sigma, k=k, genes=spatial_genes_selected, edgelist=edgelist)
   
 ```
@@ -172,7 +190,6 @@ beta_seq = (1:beta_num_iter-1)*beta_increment+beta_init
 
   result.hmrf = res
   HMRFoutput <- result.hmrf
-  
 ```
 
 ## viewHMRFresults_V2
@@ -187,5 +204,4 @@ for(kk in intersect(t_key,names(HMRFoutput)))
   }
 
 ```
-
 
