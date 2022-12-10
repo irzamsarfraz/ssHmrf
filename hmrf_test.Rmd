@@ -33,9 +33,9 @@ readGenes <- function(filePath, header = FALSE){
 .libPaths("/projectnb/rd-spat/HOME/isarfraz/R/")
 my_working_dir <- getwd()
 
+library(ggraph)
 library(smfishHmrf)
 library(tidygraph)
-library(ggraph)
 library(graphcoloring)
 library(dplyr)
 library(Giotto)
