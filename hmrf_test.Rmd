@@ -59,13 +59,13 @@ genes <- readGenes(genes_filepath)
 
 ```{r}
 
-instrs = createGiottoInstructions(save_plot = TRUE, 
-                                  show_plot = FALSE,
-                                  save_dir = my_working_dir)
-
-g <- createGiottoObject(expression = t(expr), 
-                                 spatial_locs = coords,
-                                 instructions = instrs)
+# instrs = createGiottoInstructions(save_plot = TRUE, 
+#                                   show_plot = FALSE,
+#                                   save_dir = my_working_dir)
+# 
+# g <- createGiottoObject(expression = t(expr), 
+#                                  spatial_locs = coords,
+#                                  instructions = instrs)
 
 
 # this raw expression is already normalized but if needed use code below
@@ -74,7 +74,53 @@ g <- createGiottoObject(expression = t(expr),
 spatPlot2D(g)
 
 # network
-g <- Giotto::createSpatialKNNnetwork(g)
+# g <- Giotto::createSpatialKNNnetwork(g)
+########
+spatial_locations <- data.table(sdimx = coords$X, sdimy = coords$Y, cell_ID = seq(1, nrow(coords)))
+temp_spatial_locations = spatial_locations[, grepl('sdim', colnames(spatial_locations)), with = FALSE]
+temp_spatial_locations = as.matrix(temp_spatial_locations)
+first_dimension = colnames(temp_spatial_locations)[[1]]
+second_dimension = colnames(temp_spatial_locations)[[2]]
+
+from = to = NULL
+cell_ID_vec = spatial_locations$cell_ID
+names(cell_ID_vec) = c(1:nrow(spatial_locations))
+
+
+spatial_locations_matrix = as.matrix(spatial_locations[, c("sdimx", "sdimy"), with = F])
+k <- 4
+knn_spatial <- dbscan::kNN(x = spatial_locations_matrix,
+                             k = k) #k value?
+
+knn_sptial.norm = data.frame(from = rep(1:nrow(knn_spatial$id), k),
+                               to = as.vector(knn_spatial$id),
+                               weight = 1/(1 + as.vector(knn_spatial$dist)),
+                               distance = as.vector(knn_spatial$dist))
+nw_sptial.norm = igraph::graph_from_data_frame(knn_sptial.norm, directed = FALSE)
+network_DT = data.table::as.data.table(knn_sptial.norm)
+
+xbegin_name = "sdimx_begin"
+ybegin_name = "sdimy_begin"
+xend_name = "sdimx_end"
+yend_name = "sdimy_end"
+
+spatial_network_DT = data.table::data.table(from = cell_ID_vec[network_DT$from],
+                                                to = cell_ID_vec[network_DT$to],
+                                                xbegin_name = spatial_locations[network_DT$from, sdimx],
+                                                ybegin_name = spatial_locations[network_DT$from, sdimy],
+                                                xend_name = spatial_locations[network_DT$to, sdimx],
+                                                yend_name = spatial_locations[network_DT$to, sdimy],
+                                                distance = network_DT$distance,
+                                                weight = network_DT$weight)
+
+    data.table::setnames(spatial_network_DT,
+                         old = c('xbegin_name', 'ybegin_name', 'xend_name', 'yend_name'),
+                         new = c(xbegin_name, ybegin_name, xend_name, yend_name))
+    data.table::setorder(spatial_network_DT, from, to)
+    
+    print(head(spatial_network_DT))
+    
+spatial_network <- spatial_network_DT
 ```
 
 
@@ -89,7 +135,7 @@ y = t(as.matrix(Giotto::get_expression_values(g, output = "matrix"))) # HMRF_ini
 
 #nei = HMRF_init_obj$nei
 # for nei below
-spatial_network <- Giotto::get_spatialNetwork(g, name = "knn_network", output = "networkDT")
+#spatial_network <- Giotto::get_spatialNetwork(g, name = "knn_network", output = "networkDT")
 numcell <- dim(y)[1]
 m<-dim(y)[2]
 ncol.nei = max(table(c(spatial_network$to,spatial_network$from)))
@@ -142,7 +188,7 @@ for(i in 1:k){
   damp[i]<-ifelse(is.null(di), 0, di)
 }
 
-# spatial_genes_selected <- genes[20:60] # should run binspect here
+spatial_genes_selected <- genes # should run binspect here
 ```
 
 # Save params for input to hmrf
@@ -203,5 +249,19 @@ for(kk in intersect(t_key,names(HMRFoutput)))
                title = kk)
   }
 
+###########
+# pl = ggplot2::ggplot()
+# pl = pl + ggplot2::theme_bw()
+# pl <- pl + ggplot2::geom_segment(data = spatial_network, aes(x = "sdimx_begin",
+#                                                                  y = "sdimy_begin",
+#                                                                  xend = "sdimx_end",
+#                                                                  yend = "sdimy_end"),
+#                                      color = "red", size = 0.5, alpha = 1)
+
+#######
+# ask about sdimx begin and end and color mechanism
+spatial_network$color <- dt_kk[spatial_network$from]
+p <- ggplot(spatial_network, aes(sdimx_begin, sdimy_begin)) + geom_point(aes(colour = color))
+p
 ```
 
