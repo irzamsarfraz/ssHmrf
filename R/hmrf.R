@@ -9,7 +9,7 @@
 #' @return A data.table containg the spatial network.
 #' @export
 createSpatialNetwork <- function(coords, k = 4){
-  spatial_locations <- data.table(sdimx = coords$X, sdimy = coords$Y, cell_ID = seq(1, nrow(coords)))
+  spatial_locations <- data.table::data.table(sdimx = coords$X, sdimy = coords$Y, cell_ID = seq(1, nrow(coords)))
   temp_spatial_locations = spatial_locations[, grepl('sdim', colnames(spatial_locations)), with = FALSE]
   temp_spatial_locations = as.matrix(temp_spatial_locations)
   first_dimension = colnames(temp_spatial_locations)[[1]]
@@ -111,7 +111,7 @@ initializeHMRF <- function(y, spatial_network, spatial_genes, k = 3, hmrf_seed =
   cl_color <- sort(unique(colors))
   blocks<-lapply(cl_color, function(cl){which(colors==cl)})
 
-  kk = smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
+  kk = smfishHmrf::smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
   mu<-t(kk$centers) #should be dimension (m,k)
   lclust<-lapply(1:k, function(x) which(kk$cluster == x))
   damp<-array(0, c(k));
@@ -171,7 +171,7 @@ runHMRF <- function(y, nei, numnei, blocks,
   res <- c()
   for(beta_current in beta_seq){
     print(sprintf("Doing beta=%.3f", beta_current))
-    tc.hmrfem<-smfishHmrf.hmrfem.multi(y=y, neighbors=nei, beta=beta_current, numnei=numnei,
+    tc.hmrfem<- smfishHmrf::smfishHmrf.hmrfem.multi(y=y, neighbors=nei, beta=beta_current, numnei=numnei,
                                        blocks=blocks, mu=mu, sigma=sigma, verbose=T, err=1e-7, maxit=50, dampFactor=damp)
     #smfishHmrf.hmrfem.multi.save(name, outdir, beta_current, tc.hmrfem, k)
     #do_one(name, outdir, k, y, nei, beta_current, numnei, blocks, mu, sigma, damp)
