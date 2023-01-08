@@ -5,8 +5,8 @@
 \title{runHMRF}
 \usage{
 runHMRF(
-  y,
-  nei,
+  expr,
+  neighbour_matrix,
   numnei,
   blocks,
   damp,
@@ -21,10 +21,10 @@ runHMRF(
 )
 }
 \arguments{
-\item{y}{Input expression matrix where rows are cells
+\item{expr}{Input expression matrix where rows are cells
 and columns are features.}
 
-\item{nei}{Specify the neighbours against each cell.}
+\item{neighbour_matrix}{Specify the neighbours against each cell.}
 
 \item{numnei}{Specify the number of neighbours
 against each cell.}

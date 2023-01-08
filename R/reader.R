@@ -43,7 +43,7 @@ readCoordinates <- function(filePath, header = FALSE){
   x <- read.table(filePath, header - header, row.names = 1)
   field <- x[, 1]
   x <- x[, -1]
-  colnames(x) <- c("X", "Y")
+  colnames(x) <- c("sdimx", "sdimy")
   return(list(coords = x, field = field))
 }
 

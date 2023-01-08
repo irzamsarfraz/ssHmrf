@@ -9,59 +9,40 @@
 #' @return A data.table containg the spatial network.
 #' @export
 createSpatialNetwork <- function(coords, k = 4){
-  spatial_locations <- data.table::data.table(sdimx = coords$X, sdimy = coords$Y, cell_ID = seq(1, nrow(coords)))
-  temp_spatial_locations = spatial_locations[, grepl('sdim', colnames(spatial_locations)), with = FALSE]
-  temp_spatial_locations = as.matrix(temp_spatial_locations)
-  first_dimension = colnames(temp_spatial_locations)[[1]]
-  second_dimension = colnames(temp_spatial_locations)[[2]]
 
-  from = to = NULL
-  cell_ID_vec = spatial_locations$cell_ID
-  names(cell_ID_vec) = c(1:nrow(spatial_locations))
+  # Tabulate spatial locations with cell_ID
+  spatial_locations <- data.table::data.table(sdimx = coords$sdimx,
+                                              sdimy = coords$sdimy,
+                                              cell_ID = seq(1, nrow(coords)))
 
-
+  # Run kNN from dbscan (needs matrix)
   spatial_locations_matrix = as.matrix(spatial_locations[, c("sdimx", "sdimy"), with = F])
-  knn_spatial <- dbscan::kNN(x = spatial_locations_matrix,
-                             k = k)
+  knn_spatial <- dbscan::kNN(x = spatial_locations_matrix, k = k)
 
-  knn_sptial.norm = data.frame(from = rep(1:nrow(knn_spatial$id), k),
+  # Output from dbscan is a list of values so converting into a data.frame
+  network_DT <- data.frame(from = rep(1:nrow(knn_spatial$id), k),
                                to = as.vector(knn_spatial$id),
                                weight = 1/(1 + as.vector(knn_spatial$dist)),
                                distance = as.vector(knn_spatial$dist))
-  nw_sptial.norm = igraph::graph_from_data_frame(knn_sptial.norm, directed = FALSE)
-  network_DT = data.table::as.data.table(knn_sptial.norm)
 
-  xbegin_name = "sdimx_begin"
-  ybegin_name = "sdimy_begin"
-  xend_name = "sdimx_end"
-  yend_name = "sdimy_end"
+  # Adding x & y coordinates for cells (begin & end)
+  network_DT = data.table::data.table("from" = spatial_locations$cell_ID[network_DT$from],
+                                      "to" = spatial_locations$cell_ID[network_DT$to],
+                                      "sdimx_begin" = spatial_locations[network_DT$from, "sdimx"],
+                                      "sdimy_begin" = spatial_locations[network_DT$from, "sdimy"],
+                                      "sdimx_end" = spatial_locations[network_DT$to, "sdimx"],
+                                      "sdimy_end" = spatial_locations[network_DT$to, "sdimy"],
+                                      "distance" = network_DT$distance,
+                                      "weight" = network_DT$weight)
 
-  spatial_network_DT = data.table::data.table(from = cell_ID_vec[network_DT$from],
-                                              to = cell_ID_vec[network_DT$to],
-                                              xbegin_name = spatial_locations[network_DT$from, "sdimx"],
-                                              ybegin_name = spatial_locations[network_DT$from, "sdimy"],
-                                              xend_name = spatial_locations[network_DT$to, "sdimx"],
-                                              yend_name = spatial_locations[network_DT$to, "sdimy"],
-                                              distance = network_DT$distance,
-                                              weight = network_DT$weight)
-
-  data.table::setnames(spatial_network_DT,
-                       old = c('xbegin_name', 'ybegin_name', 'xend_name', 'yend_name'),
-                       new = c(xbegin_name, ybegin_name, xend_name, yend_name))
-  data.table::setorder(spatial_network_DT, from, to)
-
-  print(head(spatial_network_DT))
-
-  spatial_network <- spatial_network_DT
-
-  return(spatial_network)
+  return(network_DT)
 }
 
 #' @title initializeHMRF
 #' @description Initializes the parameters of the HMRF using
 #' the expression matrix and the spatial network previously
 #' computed.
-#' @param y Input expression matrix where rows are cells
+#' @param expr Input expression matrix where rows are cells
 #' and columns are features.
 #' @param spatial_network Input a spatial network previously
 #' generated from \code{\link{createSpatialNetwork}} function.
@@ -77,27 +58,47 @@ createSpatialNetwork <- function(coords, k = 4){
 #'
 #' @return A list of initialized parameters for HMRF.
 #' @export
-initializeHMRF <- function(y, spatial_network, spatial_genes, k = 3, hmrf_seed = 100, nstart = 1000, factor_step = 1.05, tolerance = 1e-5){
-  numcell <- dim(y)[1]
-  m<-dim(y)[2]
-  ncol.nei = max(table(c(spatial_network$to,spatial_network$from)))
-  nei = matrix(-1,ncol = ncol.nei,nrow = numcell)
-  rownames(nei) = rownames(y)
-  for(i in 1:numcell)
+initializeHMRF <- function(expr,
+                           spatial_network,
+                           spatial_genes,
+                           k = 3,
+                           hmrf_seed = 100,
+                           nstart = 1000,
+                           factor_step = 1.05,
+                           tolerance = 1e-5){
+
+  # Get number of cells and features
+  num_cells <- dim(expr)[1]
+  num_features <-dim(expr)[2]
+
+  # Find max number of neighbours for any cell
+  max_neighbours = max(table(c(spatial_network$to, spatial_network$from)))
+
+  # Create a matrix with columns equal to max number of neighbours with default values -1
+  #   so neighbouring cell indices could be inserted later for connected neighbours of each cell
+  neighbour_matrix = matrix(-1, ncol = max_neighbours, nrow = num_cells)
+  rownames(neighbour_matrix) = rownames(expr)
+
+  # Iterate over each cell and find which cells are neighbours of which cells
+  for(i in 1:num_cells)
   {
-    nei.i = c(spatial_network$from[spatial_network$to==rownames(nei)[i]],
-              spatial_network$to[spatial_network$from==rownames(nei)[i]])
-    if(length(nei.i)>0)nei[i,1:length(nei.i)] = sort(match(nei.i,rownames(y)))
+    neighbour_matrix.i = c(spatial_network$from[spatial_network$to==rownames(neighbour_matrix)[i]],
+              spatial_network$to[spatial_network$from==rownames(neighbour_matrix)[i]])
+    if(length(neighbour_matrix.i)>0)neighbour_matrix[i,1:length(neighbour_matrix.i)] = sort(match(neighbour_matrix.i,rownames(expr)))
   }
-  numnei<-as.integer(rowSums(nei!=(-1)))
-  nn<-nei
+
+  # For each cell count number of neighbours
+  numnei<-as.integer(rowSums(neighbour_matrix!=(-1)))
+  nn<-neighbour_matrix
+
+  # Identify and store all edges between all cells
   numedge <- 0
-  for(i in 1:numcell){
+  for(i in 1:num_cells){
     numedge<-numedge + length(nn[i,nn[i,]!=-1])
   }
   edgelist <- matrix(0, nrow=numedge, ncol=2)
   edge_ind <- 1
-  for(i in 1:numcell){
+  for(i in 1:num_cells){
     neighbors <- nn[i, nn[i,]!=-1]
     for(j in 1:length(neighbors)){
       edgelist[edge_ind,] <- c(i, neighbors[j])
@@ -105,26 +106,39 @@ initializeHMRF <- function(y, spatial_network, spatial_genes, k = 3, hmrf_seed =
     }
   }
 
+  # Convert edgeList into a graph structure for easier manipulation
   pp<-tidygraph::tbl_graph(edges=as.data.frame(edgelist), directed=F)
+
+  # Use a graph coloring algorithm to assign colors to cells so no two adjacent cells have same color
   yy<-pp%>%mutate(color=as.factor(color_dsatur()))
   colors<-as.list(yy)$nodes$color
   cl_color <- sort(unique(colors))
+
+  # Form a block for each color and includes all cells for that color
   blocks<-lapply(cl_color, function(cl){which(colors==cl)})
 
-  kk = smfishHmrf::smfishHmrf.generate.centroid(y=y,par_k = k,par_seed=hmrf_seed,nstart=nstart)
-  mu<-t(kk$centers) #should be dimension (m,k)
+  # Generate initial centroids from expression data
+  kk = smfishHmrf::smfishHmrf.generate.centroid(y=expr, par_k = k, par_seed=hmrf_seed, nstart=nstart)
+
+  # Cluster centers for each feature in each cluster
+  mu<-t(kk$centers) #should be dimension (num_features, k)
   lclust<-lapply(1:k, function(x) which(kk$cluster == x))
+
+
+  # Damp values for each k cluster using findDampFactor() function
+  #  which uses sigma where sigma is cov for each cluster using cells in that cluster
   damp<-array(0, c(k));
-  sigma<-array(0, c(m,m,k))
+  sigma<-array(0, c(num_features,num_features,k))
   for(i in 1:k){
-    sigma[, , i] <- cov(as.matrix(y[lclust[[i]], ]))
+    sigma[, , i] <- cov(as.matrix(expr[lclust[[i]], ]))
     di<-findDampFactor(sigma[,,i], factor=factor_step, d_cutoff=tolerance, startValue=0.0001)
     damp[i]<-ifelse(is.null(di), 0, di)
   }
 
-  spatial_genes_selected <- spatial_genes #genes # should run binspect here
+  # Spatially variable genes selected for downstream
+  spatial_genes_selected <- spatial_genes #genes # should run binspect here .. TODO
 
-  inputList <- list(y=y, nei=nei, numnei=numnei, blocks=blocks,
+  inputList <- list(expr=expr, neighbour_matrix=neighbour_matrix, numnei=numnei, blocks=blocks,
                     damp=damp, mu=mu, sigma=sigma, k=k, genes=spatial_genes_selected, edgelist=edgelist)
 
   return(inputList)
@@ -132,9 +146,9 @@ initializeHMRF <- function(y, spatial_network, spatial_genes, k = 3, hmrf_seed =
 
 #' runHMRF
 #'
-#' @param y Input expression matrix where rows are cells
+#' @param expr Input expression matrix where rows are cells
 #' and columns are features.
-#' @param nei Specify the neighbours against each cell.
+#' @param neighbour_matrix Specify the neighbours against each cell.
 #' @param numnei Specify the number of neighbours
 #' against each cell.
 #' @param blocks Specify the groups of clusters computed
@@ -153,30 +167,32 @@ initializeHMRF <- function(y, spatial_network, spatial_genes, k = 3, hmrf_seed =
 #'
 #' @return A list containing results of HMRF.
 #' @export
-runHMRF <- function(y, nei, numnei, blocks,
-                    damp, mu, sigma, k, genes, edgelist, beta_initial_value = 0, beta_increment_value = 10, beta_iterations = 5){
-  y <- as.matrix(y)
-  #betas <- c(0,10,5)
-  #beta_init = betas[1]
-  beta_init <- beta_initial_value
-  #beta_increment = betas[2]
-  beta_increment = beta_increment_value
-  #beta_num_iter = betas[3]
-  beta_num_iter = beta_iterations
+runHMRF <- function(expr,
+                    neighbour_matrix,
+                    numnei,
+                    blocks,
+                    damp,
+                    mu,
+                    sigma,
+                    k,
+                    genes,
+                    edgelist,
+                    beta_initial_value = 0,
+                    beta_increment_value = 10,
+                    beta_iterations = 5){
 
+  expr <- as.matrix(expr)
 
-  beta_seq = (1:beta_num_iter-1)*beta_increment+beta_init
-  # beta_seq = sequence(beta_num_iter,beta_init,beta_increment)
+  # Run HMRF for each beta value
+  beta_seq = (1:beta_iterations-1)*beta_increment_value+beta_initial_value
   beta_seq = sort(unique(c(0,beta_seq)))
   res <- c()
   for(beta_current in beta_seq){
     print(sprintf("Doing beta=%.3f", beta_current))
-    tc.hmrfem<- smfishHmrf::smfishHmrf.hmrfem.multi(y=y, neighbors=nei, beta=beta_current, numnei=numnei,
+    tc.hmrfem<- smfishHmrf::smfishHmrf.hmrfem.multi(y=expr, neighbors=neighbour_matrix, beta=beta_current, numnei=numnei,
                                        blocks=blocks, mu=mu, sigma=sigma, verbose=T, err=1e-7, maxit=50, dampFactor=damp)
-    #smfishHmrf.hmrfem.multi.save(name, outdir, beta_current, tc.hmrfem, k)
-    #do_one(name, outdir, k, y, nei, beta_current, numnei, blocks, mu, sigma, damp)
 
-    ### stop the loop if there is a samll maximum probablity (<1/k+0.05v) of any gene
+    ### stop the loop if there is a small maximum probablity (<1/k+0.05v) of any gene
     if(sum(apply(tc.hmrfem$prob,1,max)<(1/k+0.05))>0)
     {cat(paste0('\n HMRF is stopping at large beta >= ',beta_current,', numerical error occurs, results of smaller betas were stored\n'));
       break()}
@@ -184,11 +200,10 @@ runHMRF <- function(y, nei, numnei, blocks,
     t_key <- sprintf("k=%d b=%.2f", k, beta_current)
     tc.hmrfem$sigma=NULL
     tc.hmrfem$mu=NULL
-    rownames(tc.hmrfem$prob) = rownames(y)
-    rownames(tc.hmrfem$unnormprob) = rownames(y)
-    names(tc.hmrfem$class) = rownames(y)
+    rownames(tc.hmrfem$prob) = rownames(expr)
+    rownames(tc.hmrfem$unnormprob) = rownames(expr)
+    names(tc.hmrfem$class) = rownames(expr)
     res[[t_key]] <- tc.hmrfem
-    # beta_current <- beta_current + beta_increment
   }
 
   result.hmrf = res

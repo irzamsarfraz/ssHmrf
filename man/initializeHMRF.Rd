@@ -5,7 +5,7 @@
 \title{initializeHMRF}
 \usage{
 initializeHMRF(
-  y,
+  expr,
   spatial_network,
   spatial_genes,
   k = 3,
@@ -16,7 +16,7 @@ initializeHMRF(
 )
 }
 \arguments{
-\item{y}{Input expression matrix where rows are cells
+\item{expr}{Input expression matrix where rows are cells
 and columns are features.}
 
 \item{spatial_network}{Input a spatial network previously

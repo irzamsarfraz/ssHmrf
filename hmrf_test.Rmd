@@ -33,13 +33,14 @@ fields <- coords$field
 coords <- coords$coords
 genes <- readGenes(genes_filepath)
 
-spatial_network <- createSpatialNetwork(coords = coords, 
-                                         k = 4)
-hmrfParams <- initializeHMRF(y = expr, 
+spatial_network <- createSpatialNetwork(coords = coords, k = 4)
+
+hmrfParams <- initializeHMRF(expr = expr, 
                              spatial_network = spatial_network, 
                              spatial_genes = genes, 
                              k = 3)
-hmrfResults <- runHMRF(y = expr, 
+
+hmrfResults <- runHMRF(expr = expr, 
                        nei = hmrfParams$nei, 
                        numnei = hmrfParams$numnei, 
                        blocks = hmrfParams$blocks, 
