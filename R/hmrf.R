@@ -16,24 +16,36 @@ createSpatialNetwork <- function(coords, k = 4){
                                               cell_ID = seq(1, nrow(coords)))
 
   # Run kNN from dbscan (needs matrix)
-  spatial_locations_matrix = as.matrix(spatial_locations[, c("sdimx", "sdimy"), with = F])
-  knn_spatial <- dbscan::kNN(x = spatial_locations_matrix, k = k)
+  #spatial_locations_matrix = as.matrix(spatial_locations[, c("sdimx", "sdimy"), with = F])
+  knn_spatial <- dbscan::kNN(x = spatial_locations[, c("sdimx", "sdimy")], k = k)
+  from <- rep(1:nrow(knn_spatial$id), k)
+  to <- as.vector(knn_spatial$id)
+  weight <- 1/(1 + as.vector(knn_spatial$dist))
+  distance <- as.vector(knn_spatial$dist)
 
   # Output from dbscan is a list of values so converting into a data.frame
-  network_DT <- data.frame(from = rep(1:nrow(knn_spatial$id), k),
-                               to = as.vector(knn_spatial$id),
-                               weight = 1/(1 + as.vector(knn_spatial$dist)),
-                               distance = as.vector(knn_spatial$dist))
+  # network_DT <- data.frame(from = rep(1:nrow(knn_spatial$id), k),
+  #                              to = as.vector(knn_spatial$id),
+  #                              weight = 1/(1 + as.vector(knn_spatial$dist)),
+  #                              distance = as.vector(knn_spatial$dist))
 
   # Adding x & y coordinates for cells (begin & end)
-  network_DT = data.table::data.table("from" = spatial_locations$cell_ID[network_DT$from],
-                                      "to" = spatial_locations$cell_ID[network_DT$to],
-                                      "sdimx_begin" = spatial_locations[network_DT$from, "sdimx"],
-                                      "sdimy_begin" = spatial_locations[network_DT$from, "sdimy"],
-                                      "sdimx_end" = spatial_locations[network_DT$to, "sdimx"],
-                                      "sdimy_end" = spatial_locations[network_DT$to, "sdimy"],
-                                      "distance" = network_DT$distance,
-                                      "weight" = network_DT$weight)
+  # network_DT = data.table::data.table("from" = spatial_locations$cell_ID[network_DT$from],
+  #                                     "to" = spatial_locations$cell_ID[network_DT$to],
+  #                                     "sdimx_begin" = spatial_locations[network_DT$from, "sdimx"],
+  #                                     "sdimy_begin" = spatial_locations[network_DT$from, "sdimy"],
+  #                                     "sdimx_end" = spatial_locations[network_DT$to, "sdimx"],
+  #                                     "sdimy_end" = spatial_locations[network_DT$to, "sdimy"],
+  #                                     "distance" = network_DT$distance,
+  #                                     "weight" = network_DT$weight)
+  network_DT <- data.table::data.table("from" = spatial_locations$cell_ID[from],
+                                      "to" = spatial_locations$cell_ID[to],
+                                      "sdimx_begin" = spatial_locations[from, "sdimx"],
+                                      "sdimy_begin" = spatial_locations[from, "sdimy"],
+                                      "sdimx_end" = spatial_locations[to, "sdimx"],
+                                      "sdimy_end" = spatial_locations[to, "sdimy"],
+                                      "distance" = distance,
+                                      "weight" = weight)
 
   return(network_DT)
 }
@@ -108,10 +120,12 @@ initializeHMRF <- function(expr,
 
   # Convert edgeList into a graph structure for easier manipulation
   pp<-tidygraph::tbl_graph(edges=as.data.frame(edgelist), directed=F)
+  # igraph::graph_from_edgelist(el = edgelist, directed = FALSE) #works well
 
   # Use a graph coloring algorithm to assign colors to cells so no two adjacent cells have same color
   yy<-pp%>%mutate(color=as.factor(color_dsatur()))
   colors<-as.list(yy)$nodes$color
+  # colors <- igraph::greedy_vertex_coloring(ig) # will work but colors are different
   cl_color <- sort(unique(colors))
 
   # Form a block for each color and includes all cells for that color
@@ -136,7 +150,7 @@ initializeHMRF <- function(expr,
   }
 
   # Spatially variable genes selected for downstream
-  spatial_genes_selected <- spatial_genes #genes # should run binspect here .. TODO
+  spatial_genes_selected <- spatial_genes # do this outside if required, to make it generalizeable
 
   inputList <- list(expr=expr, neighbour_matrix=neighbour_matrix, numnei=numnei, blocks=blocks,
                     damp=damp, mu=mu, sigma=sigma, k=k, genes=spatial_genes_selected, edgelist=edgelist)
